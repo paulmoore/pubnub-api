@@ -1,7 +1,8 @@
 package pubnub;
 
-import org.json.JSONObject;
+import org.json.*;
 
-public interface Callback {
-    public abstract boolean execute(JSONObject message) ;
+public interface Callback
+{
+	public abstract boolean execute (JSONObject message);
 }
