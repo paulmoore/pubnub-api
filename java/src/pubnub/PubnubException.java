@@ -1,10 +1,10 @@
 package pubnub;
 
-import org.json.JSONObject;
-
 /**
- * Callback interface for Subscription objects. This interface is responsible
- * for handling Incoming messages from a subscription to a Pubnub channel.
+ * A PubnubException is a simple wrapper around a RuntimeException. This can be
+ * thrown by most operations when using a Pubnub object. It extends
+ * RuntimeException to enable optional error handling and reduce boiler-plate
+ * code.
  * 
  * PubNub Real-time Cloud-Hosted Push API and Push Notification Client
  * Frameworks Copyright (c) 2011 TopMambo Inc. http://www.pubnub.com/
@@ -32,17 +32,19 @@ import org.json.JSONObject;
  * Frameworks Copyright (c) 2011 TopMambo Inc. http://www.pubnub.com/
  * http://www.pubnub.com/terms
  * 
- * @see Subscription
  * @author Paul Moore
  */
-public interface Callback
+public class PubnubException extends RuntimeException
 {
-	/**
-	 * Handle a Pubnub channel subscription message.
-	 * 
-	 * @param message The received message.
-	 * @return If this returns false, the subscription to the underlying channel
-	 *         will terminate.
-	 */
-	public boolean execute (JSONObject message);
+	private static final long serialVersionUID = 4250132581198592948L;
+
+	protected PubnubException (Exception e)
+	{
+		super(e);
+	}
+
+	protected PubnubException (String reason)
+	{
+		super(reason);
+	}
 }

@@ -3,11 +3,19 @@ package pubnub;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.math.BigInteger;
 import java.net.URL;
 import java.net.URLConnection;
+import java.security.GeneralSecurityException;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
+
+import javax.crypto.Cipher;
+import javax.crypto.Mac;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -15,6 +23,32 @@ import org.json.JSONObject;
 
 /**
  * PubNub 3.0 Real-time Push Cloud API.
+ * 
+ * PubNub Real-time Cloud-Hosted Push API and Push Notification Client
+ * Frameworks Copyright (c) 2011 TopMambo Inc. http://www.pubnub.com/
+ * http://www.pubnub.com/terms
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
+ * PubNub Real-time Cloud-Hosted Push API and Push Notification Client
+ * Frameworks Copyright (c) 2011 TopMambo Inc. http://www.pubnub.com/
+ * http://www.pubnub.com/terms
  * 
  * @author Stephen Blum
  * @author Paul Moore
@@ -30,33 +64,55 @@ public class Pubnub
 	protected final String PUBLISH_KEY;
 	protected final String SUBSCRIBE_KEY;
 	protected final String SECRET_KEY;
-	protected final String CIPHER_KEY;
+	protected final byte[] CIPHER_KEY;
 	protected final String ORIGIN;
 	protected final boolean SSL;
-	
-	private PubnubCrypto crypto;
-	
+
+	/** Secret key generated from the CIPHER_KEY. */
+	private SecretKeySpec ckeySpec, skeySpec;
+	/** Encryption padding, 16 bytes of 0. */
+	private IvParameterSpec ivSpec;
+
 	/**
 	 * PubNub 3.0.
 	 * 
 	 * Prepare PubNub Class State.
 	 * 
-	 * @param String Publish Key.
-	 * @param String Subscribe Key.
-	 * @param String Secret Key.
-	 * @param boolean SSL Enabled.
+	 * @param publish_key Your Pubnub Publish key.
+	 * @param subscribe_key Your Pubnub Subscribe key.
+	 * @param secret_key Your Pubnub Secret key.
+	 * @param cipher_key Your own 128-bit AES encryption key.
+	 * @param ssl_on SSL Enabled.
 	 */
-	public Pubnub (String publish_key, String subscribe_key, String secret_key, String cipher_key, boolean ssl_on)
+	public Pubnub (String publish_key, String subscribe_key, String secret_key, byte[] cipher_key, boolean ssl_on)
 	{
 		PUBLISH_KEY = publish_key;
 		SUBSCRIBE_KEY = subscribe_key;
 		SECRET_KEY = secret_key;
 		CIPHER_KEY = cipher_key;
 		SSL = ssl_on;
-		
+
+		// Need to create the necessary objects for the digest algorithms
+		if (SECRET_KEY != null)
+		{
+			try
+			{
+				skeySpec = new SecretKeySpec(SECRET_KEY.getBytes("UTF-8"), "HmacSHA256");
+			}
+			catch (UnsupportedEncodingException e)
+			{
+				throw new PubnubException(e);
+			}
+		}
+
+		// Create necessary objects to perform encryption/decryption if provided
+		// with a cipher key.
 		if (CIPHER_KEY != null)
 		{
-			crypto = new PubnubCrypto(CIPHER_KEY);
+			ckeySpec = new SecretKeySpec(CIPHER_KEY, "AES");
+			// Initialization Vector is 0 for simplicity.
+			byte[] iv = new byte[16];
+			ivSpec = new IvParameterSpec(iv);
 		}
 
 		// SSL On?
@@ -75,8 +131,8 @@ public class Pubnub
 	 * 
 	 * Prepare PubNub Class State.
 	 * 
-	 * @param String Publish Key.
-	 * @param String Subscribe Key.
+	 * @param publish_key Your Pubnub Publish key.
+	 * @param subscribe_key Your Pubnub Subscribe key.
 	 */
 	public Pubnub (String publish_key, String subscribe_key)
 	{
@@ -88,9 +144,9 @@ public class Pubnub
 	 * 
 	 * Prepare PubNub Class State.
 	 * 
-	 * @param String Publish Key.
-	 * @param String Subscribe Key.
-	 * @param String Secret Key.
+	 * @param publish_key Your Pubnub Publish key.
+	 * @param subscribe_key Your Pubnub Subscribe key.
+	 * @param secret_key Your Pubnub Secret key.
 	 */
 	public Pubnub (String publish_key, String subscribe_key, String secret_key)
 	{
@@ -102,25 +158,41 @@ public class Pubnub
 	 * 
 	 * Send a message to a channel.
 	 * 
-	 * @param String channel name.
-	 * @param JSONObject message.
-	 * @return boolean false on fail.
+	 * @param channel The name of the channel to publish to.
+	 * @param message The message to publish.
+	 * @return The response array.
 	 */
 	public JSONArray publish (String channel, JSONObject message)
 	{
 		// Generate String to Sign.
 		String signature = "0";
-		
+
 		// Encrypt the message if provided with a cipher key.
-		message = encrypt(message);
-		
+		String msgString = encrypt(message);
+
 		if (SECRET_KEY != null)
 		{
 			StringBuilder string_to_sign = new StringBuilder();
-			string_to_sign.append(PUBLISH_KEY).append('/').append(SUBSCRIBE_KEY).append('/').append(SECRET_KEY).append('/').append(channel).append('/').append(message.toString());
+			string_to_sign.append(PUBLISH_KEY).append('/').append(SUBSCRIBE_KEY).append('/').append(SECRET_KEY).append('/').append(channel).append('/').append(msgString);
 
-			// Sign Message.
-			signature = PubnubCrypto.getHMacSHA256(SECRET_KEY, string_to_sign.toString());
+			// Sign the message.
+			try
+			{
+				Mac sha256_HMAC = Mac.getInstance("HMACSHA256");
+				sha256_HMAC.init(skeySpec);
+				byte[] mac_data = sha256_HMAC.doFinal(string_to_sign.toString().getBytes("UTF-8"));
+
+				BigInteger number = new BigInteger(1, mac_data);
+				signature = number.toString(16);
+			}
+			catch (UnsupportedEncodingException e)
+			{
+				throw new PubnubException(e);
+			}
+			catch (GeneralSecurityException e)
+			{
+				throw new PubnubException(e);
+			}
 		}
 
 		// Build URL.
@@ -131,7 +203,7 @@ public class Pubnub
 		url.add(signature);
 		url.add(channel);
 		url.add("0");
-		url.add(message.toString());
+		url.add(msgString);
 
 		// Return JSONArray.
 		return request(url);
@@ -144,8 +216,8 @@ public class Pubnub
 	 * 
 	 * @param channel The channel to subscribe to.
 	 * @param callback The callback object to receive the messages.
-	 * @return The subscription object.
-	 * @see pubnub.Subscription
+	 * @return The Subscription object.
+	 * @see Subscription
 	 */
 	public Subscription subscribe (String channel, Callback callback)
 	{
@@ -157,9 +229,9 @@ public class Pubnub
 	 * 
 	 * Load history from a channel.
 	 * 
-	 * @param String channel name.
-	 * @param int limit history count response.
-	 * @return JSONArray of history.
+	 * @param channel The channel to get history of.
+	 * @param limit The limit to the number of messages to receive.
+	 * @return An array of messages.
 	 */
 	public JSONArray history (String channel, int limit)
 	{
@@ -171,7 +243,28 @@ public class Pubnub
 		url.add("0");
 		url.add(Integer.toString(limit));
 
-		return decrypt(request(url));
+		JSONArray response = request(url);
+		try
+		{
+			// Go through the array of returned messages.
+			for (int i = 0; i < response.length(); i++)
+			{
+				JSONObject message = response.optJSONObject(i);
+				// Message Null? Must be encrypted.
+				if (message == null)
+				{
+					message = new JSONObject(decrypt(response.optString(i)));
+					// Put the unencrypted object back into the array.
+					response.put(i, message);
+				}
+			}
+		}
+		catch (JSONException e)
+		{
+			throw new PubnubException(e);
+		}
+
+		return response;
 	}
 
 	/**
@@ -179,7 +272,8 @@ public class Pubnub
 	 * 
 	 * Timestamp from PubNub Cloud.
 	 * 
-	 * @return double timestamp.
+	 * @return A double representing the Pubnub server time, or Double.NaN if
+	 *         there was an error.
 	 */
 	public double time ()
 	{
@@ -188,21 +282,27 @@ public class Pubnub
 		url.add("time");
 		url.add("0");
 
-		JSONArray response = request(url);
-		if (response == null)
+		try
 		{
-			return Double.NaN;
+			JSONArray response = request(url);
+			return response.optDouble(0, Double.NaN);
 		}
-		return response.optDouble(0);
+		catch (PubnubException e)
+		{
+		}
+
+		return Double.NaN;
 	}
 
 	/**
 	 * UUID.
 	 * 
-	 * Generates a UUID from the Pubnub cloud.
-	 * (Server-side)
+	 * Generates a UUID from the Pubnub cloud. (Server-side). If there was an
+	 * error in requesting a UUID, this method will fall-back to the local
+	 * creation of a random UUID object.
 	 * 
 	 * @return The UUID object corresponding to the response.
+	 * @see UUID
 	 */
 	public UUID uuid ()
 	{
@@ -213,26 +313,26 @@ public class Pubnub
 		String s = SSL ? "s" : "";
 		String origin = "http" + s + "://pubnub-prod.appspot.com";
 
-		JSONArray response = request(origin, url);
-		if (response == null)
-		{
-			return null;
-		}
 		try
 		{
+			JSONArray response = request(origin, url);
 			return UUID.fromString(response.optString(0));
 		}
 		catch (IllegalArgumentException e)
 		{
 		}
-		return null;
+		catch (PubnubException e)
+		{
+		}
+
+		return UUID.randomUUID();
 	}
-	
+
 	protected URLConnection prepareConnection (Iterable<String> url_components)
 	{
 		return prepareConnection(ORIGIN, url_components);
 	}
-	
+
 	protected URLConnection prepareConnection (String origin, Iterable<String> url_components)
 	{
 		StringBuilder o = new StringBuilder();
@@ -248,9 +348,9 @@ public class Pubnub
 		// Fail if string too long.
 		if (o.length() > LIMIT)
 		{
-			return null;
+			throw new PubnubException("Message to long: " + o.length() + " when limit is: " + LIMIT);
 		}
-		
+
 		try
 		{
 			URL url = new URL(o.toString());
@@ -262,36 +362,37 @@ public class Pubnub
 		}
 		catch (IOException e)
 		{
+			throw new PubnubException(e);
 		}
-		
-		return null;
 	}
-	
+
 	protected JSONArray request (Iterable<String> url_components)
 	{
 		return request(prepareConnection(ORIGIN, url_components));
 	}
-	
+
 	protected JSONArray request (String origin, Iterable<String> url_components)
 	{
 		return request(prepareConnection(origin, url_components));
 	}
-	
+
 	protected JSONArray request (URLConnection conn)
 	{
+		// Needed to catch an 'expected' race condition when a Subscription is
+		// using this method.
 		if (conn == null)
 		{
 			return null;
 		}
-		
+
 		BufferedReader reader = null;
 		StringBuilder o = new StringBuilder();
-		
+
 		try
 		{
 			// Create the reader, will I/O block.
 			reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-			
+
 			// Read JSON Message.
 			String line;
 			while ((line = reader.readLine()) != null)
@@ -301,8 +402,7 @@ public class Pubnub
 		}
 		catch (IOException e)
 		{
-			// Failed JSONP HTTP Request.
-			return null;
+			throw new PubnubException(e);
 		}
 		finally
 		{
@@ -312,12 +412,12 @@ public class Pubnub
 				{
 					reader.close();
 				}
-				catch (IOException e)
+				catch (IOException ignored)
 				{
 				}
 			}
 		}
-		
+
 		// Parse JSON String.
 		try
 		{
@@ -325,39 +425,75 @@ public class Pubnub
 		}
 		catch (JSONException e)
 		{
+			throw new PubnubException(e);
 		}
-		
-		// Failed JSON Parsing.
-		return null;
 	}
 
-	protected JSONObject decrypt (JSONObject object)
+	protected String decrypt (String raw)
 	{
 		if (CIPHER_KEY != null)
 		{
-			object = crypto.decrypt(object);
+			try
+			{
+				Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+				cipher.init(Cipher.DECRYPT_MODE, ckeySpec, ivSpec);
+
+				JSONArray array = new JSONArray(raw);
+				String encoded = array.optString(0);
+
+				byte[] encrypted = Base64.decode(encoded);
+				byte[] decrypted = cipher.doFinal(encrypted);
+
+				String message = new String(decrypted, "UTF-8");
+				return message;
+			}
+			catch (GeneralSecurityException e)
+			{
+				throw new PubnubException(e);
+			}
+			catch (UnsupportedEncodingException e)
+			{
+				throw new PubnubException(e);
+			}
+			catch (JSONException e)
+			{
+				throw new PubnubException(e);
+			}
 		}
-		return object;
+
+		return raw;
 	}
-	
-	protected JSONArray decrypt (JSONArray array)
+
+	protected String encrypt (JSONObject message)
 	{
+		String raw = message.toString();
 		if (CIPHER_KEY != null)
 		{
-			array = crypto.decryptJSONArray(array);
+			try
+			{
+				Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+				cipher.init(Cipher.ENCRYPT_MODE, ckeySpec, ivSpec);
+
+				byte[] bytes = raw.getBytes("UTF-8");
+				byte[] encrypted = cipher.doFinal(bytes);
+
+				String encoded = Base64.encode(encrypted);
+				JSONArray array = new JSONArray();
+				array.put(encoded);
+				return array.toString();
+			}
+			catch (GeneralSecurityException e)
+			{
+				throw new PubnubException(e);
+			}
+			catch (UnsupportedEncodingException e)
+			{
+				throw new PubnubException(e);
+			}
 		}
-		return array;
+		return raw;
 	}
-	
-	protected JSONObject encrypt (JSONObject object)
-	{
-		if (CIPHER_KEY != null)
-		{
-			object = crypto.encrypt(object);
-		}
-		return object;
-	}
-	
+
 	private String encodeURIcomponent (String s)
 	{
 		StringBuilder o = new StringBuilder();
