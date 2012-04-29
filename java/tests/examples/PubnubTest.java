@@ -6,7 +6,6 @@ import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import pubnub.Base64;
 import pubnub.Callback;
 import pubnub.Pubnub;
 import pubnub.PubnubException;
@@ -53,15 +52,11 @@ class PubnubTest
 		// Get a random channel for testing.
 		channel = "hello_world" + UUID.randomUUID();
 
-		String s = Base64.encode("{\"test\":\"Hello World\"}".getBytes());
-		System.out.println(s);
-		System.out.println(new String(Base64.decode(s)));
-		/*
 		PubnubTest.test_uuid();
 		PubnubTest.test_time();
 		PubnubTest.test_publish();
 		PubnubTest.test_subscribe();
-		PubnubTest.test_history();*/
+		PubnubTest.test_history();
 	}
 
 	public static void test_uuid ()
