@@ -1,5 +1,10 @@
-require "Json"
 require "crypto"
+require "aeslua"
+require "base64"
+
+local json = require "json"
+local util = require "aeslua.util"
+local ciphermode = require "aeslua.ciphermode"
 
 pubnub      = {}
 local LIMIT = 1700
@@ -23,18 +28,18 @@ function pubnub.new(init)
         end
 
         local channel   = args.channel
-        local message   = Json.Encode(args.message)
+        local message   = json.encode( self:_encrypt(args.message) )
         local signature = "0"
 
         -- SIGN PUBLISHED MESSAGE?
         if self.secret_key then
-            signature = crypto.digest( crypto.md5, table.concat( {
+            signature = crypto.hmac( crypto.sha256, table.concat( {
                 self.publish_key,
                 self.subscribe_key,
                 self.secret_key,
                 channel,
                 message
-            }, "/" ) )
+            }, "/" ), self.secret_key )
         end
 
         -- MESSAGE TOO LONG?
@@ -120,7 +125,7 @@ function pubnub.new(init)
                     timer.performWithDelay( 1, substabizel )
 
                     for i, message in ipairs(response[1]) do
-                        callback(message)
+                        callback( self:_decrypt(message) )
                     end
                 end,
                 request = {
@@ -159,7 +164,14 @@ function pubnub.new(init)
         if not limit then limit = 10 end
 
         self:_request({
-            callback = callback,
+            callback = function( messages )
+				if messages then
+					for i, message in ipairs(messages) do
+	            		messages[i] = self:_decrypt(message)
+	        		end
+				end
+				args.callback(messages)
+			end,
             request  = {
                 'history',
                 self.subscribe_key,
@@ -186,9 +198,31 @@ function pubnub.new(init)
         })
     end
 
+	function self:uuid(args)
+		if not args.callback then
+			return print("Missing UUID Callback")
+		end
+		
+		local SSL = ""
+		if self.ssl then
+			SSL = "s"
+		end
+		
+		self:_request({
+			origin = "http"..SSL.."://pubnub-prod.appspot.com",
+			request = { "uuid" },
+			callback = function(response)
+				if response then
+					return args.callback(response[1])
+				end
+				args.callback(nil)
+			end
+		})
+	end
+
     function self:_request(args)
         -- APPEND PUBNUB CLOUD ORIGIN 
-        table.insert( args.request, 1, self.origin )
+        table.insert( args.request, 1, args.origin or self.origin )
 
         local url = table.concat( args.request, "/" )
 
@@ -197,7 +231,7 @@ function pubnub.new(init)
                 return args.callback(nil)
             end
 
-            status, message = pcall( Json.Decode, event.response )
+            status, message = pcall( json.decode, event.response )
 
             if status then
                 return args.callback(message)
@@ -221,6 +255,28 @@ function pubnub.new(init)
         end
         return new_array
     end
+
+	function self:_encrypt ( message )
+		if self.cipher_key then
+			local raw = json.encode(message)
+			local paddedData = util.padByteString(raw)
+			local encrypted = ciphermode.encryptString(self.cipher_key, paddedData, ciphermode.encryptCBC)
+			local encoded = base64.encode(encrypted)
+			return { encoded }
+		end
+		return message
+	end
+	
+	function self:_decrypt ( message )
+		if self.cipher_key and #message == 1 then
+			local encoded = message[1]
+			local decoded = base64.decode(encoded)
+			local decrypted = ciphermode.decryptString(self.cipher_key, decoded, ciphermode.decryptCBC)
+			local plain = util.unpadByteString(decrypted)
+			return json.decode(plain)
+		end
+		return message
+	end
 
     -- RETURN NEW PUBNUB OBJECT
     return self
