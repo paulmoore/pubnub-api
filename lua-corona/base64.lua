@@ -1,7 +1,40 @@
+--- base64.lua
+--
+-- A simple Base64 encoder/decoder that uses a URL safe variant of the standard.
+-- This implementation encodes character 62 as '-' (instead of '+') and character 63 as '_' (instead of '/').
+-- In addition, padding is not used.
+-- A full description of the specification can be found here: http://tools.ietf.org/html/rfc4648
+--
+-- To encode, use base64.encode(input), where input is a string of arbitrary bytes.  The output is a Base64 encoded string.
+-- To decode, use base64.decode(input), where input is a Base64 encoded string.  The output is a string of arbitrary bytes.
+--
+-- For all input, input == base64.decode(base64.encode(input)).
+--
+-- Copyright (C) 2012 by Paul Moore
+--
+-- Permission is hereby granted, free of charge, to any person obtaining a copy
+-- of this software and associated documentation files (the "Software"), to deal
+-- in the Software without restriction, including without limitation the rights
+-- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-- copies of the Software, and to permit persons to whom the Software is
+-- furnished to do so, subject to the following conditions:
+--
+-- The above copyright notice and this permission notice shall be included in
+-- all copies or substantial portions of the Software.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+-- THE SOFTWARE.
+
 require "bit"
 
 base64 = {}
 
+--- octet -> char encoding.
 local ENCODABET = {
 	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
 	'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
@@ -12,6 +45,8 @@ local ENCODABET = {
 	'8', '9', '-', '_'
 }
 
+--- char -> octet encoding.
+-- Offset by 44 (from index 1).
 local DECODABET = {
 	62,  0,  0, 52, 53, 54, 55, 56, 57, 58,
 	59, 60, 61,  0,  0,  0,  0,  0,  0,  0,
@@ -23,9 +58,14 @@ local DECODABET = {
 	44, 45, 46, 47, 48, 49, 50, 51
 }
 
+--- Encodes a string into a Base64 string.
+-- The input can be any string of arbitrary bytes.
+--
+-- @param input The input string.
+-- @return The Base64 representation of the input string.
 function base64.encode (input)
 	
-	local bytes = { input:byte(i, input:len()) }
+	local bytes = { input:byte(i, #input) }
 
 	local out = {}
 	
@@ -107,13 +147,18 @@ function base64.encode (input)
 	
 end
 
+--- Decodes a Base64 string into an output string of arbitrary bytes.
+-- Currently does not check the input for valid Base64, so be careful.
+--
+-- @param input The Base64 input to decode.
+-- @return The decoded Base64 string, as a string of bytes.
 function base64.decode (input)
 	
 	local out = {}
 	
 	-- Go through each group of 4 octets to obtain 3 bytes.
 	local i = 1
-	while i <= input:len() - 3 do
+	while i <= #input - 3 do
 		local buffer = 0
 		
 		-- Read the 4 octets into the buffer, producing a 24-bit integer.
@@ -154,7 +199,7 @@ function base64.decode (input)
 	end
 
 	-- Special case 1: Only 2 octets remain, producing 1 byte.
-	if input:len() % 4 == 2 then
+	if #input % 4 == 2 then
 		local buffer = 0
 
 		local b = input:byte(i)
@@ -174,7 +219,7 @@ function base64.decode (input)
 		out[#out + 1] = b
 		
 	-- Special case 2: Only 3 octets remain, producing 2 bytes.
-	elseif input:len() % 4 == 3 then
+	elseif #input % 4 == 3 then
 		local buffer = 0
 		
 		local b = input:byte(i)
