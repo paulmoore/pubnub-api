@@ -10,6 +10,8 @@
 --
 -- For all input, input == base64.decode(base64.encode(input)).
 --
+-- This library has a dependency on LuaBit v0.4, which can be found here: http://luaforge.net/projects/bit/
+--
 -- Copyright (C) 2012 by Paul Moore
 --
 -- Permission is hereby granted, free of charge, to any person obtaining a copy
