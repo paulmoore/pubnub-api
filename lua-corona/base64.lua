@@ -1,14 +1,29 @@
 --- base64.lua
 --
+-- https://gist.github.com/2563975
+--
+-- V0.3 for Lua 5.1
+--
 -- A simple Base64 encoder/decoder that uses a URL safe variant of the standard.
 -- This implementation encodes character 62 as '-' (instead of '+') and character 63 as '_' (instead of '/').
--- In addition, padding is not used.
+-- In addition, padding is not used by default.
 -- A full description of the specification can be found here: http://tools.ietf.org/html/rfc4648
 --
 -- To encode, use base64.encode(input), where input is a string of arbitrary bytes.  The output is a Base64 encoded string.
 -- To decode, use base64.decode(input), where input is a Base64 encoded string.  The output is a string of arbitrary bytes.
 --
--- For all input, input == base64.decode(base64.encode(input)).
+-- The library will throw an error on invalid input, you can catch these as such:
+--
+-- local status, result = pcall(base64.decode(invalidInput))
+-- if not status then
+--     print("Error, "..result)
+-- end
+--
+-- If you prefer a different Base64 variant, you can simply change the ENCODABET to your liking.
+-- If you wish to use padding, you can change the PAD value to a non-nil, non-empty string.
+-- The library will still be able to decode non-padded strings if a PAD is given.
+--
+-- For all valid input, input == base64.decode(base64.encode(input)).
 --
 -- This library has a dependency on LuaBit v0.4, which can be found here: http://luaforge.net/projects/bit/
 --
@@ -48,24 +63,39 @@ local ENCODABET = {
 }
 
 --- char -> octet encoding.
--- Offset by 44 (from index 1).
-local DECODABET = {
-	62,  0,  0, 52, 53, 54, 55, 56, 57, 58,
-	59, 60, 61,  0,  0,  0,  0,  0,  0,  0,
-	 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
-	10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-	20, 21, 22, 23, 24, 25,  0,  0,  0,  0,
-	63,  0, 26, 27, 28, 29, 30, 31, 32, 33,
-	34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-	44, 45, 46, 47, 48, 49, 50, 51
-}
+local DECODABET = {}
+for i, v in ipairs(ENCODABET) do
+	DECODABET[v] = i - 1
+end
+
+local PAD = nil
+
+--- Converts a 6-bit octet into the associated Base64 character.
+--
+-- @param octet A 6-bit integer.
+-- @return The Base64 representation of the character
+local function toChar (octet)
+	return assert(ENCODABET[octet + 1], "No Base64 character for octet: "..tostring(octet))
+end
+
+--- Converts a Base64 character into the associated octet.
+--
+-- @param char The single Base64 character.
+-- @return The 6-bit integer representing the Base64 character.
+local function toOctet (char)
+	return assert(DECODABET[char], "Not a valid Base64 character: "..tostring(char))
+end
 
 --- Encodes a string into a Base64 string.
 -- The input can be any string of arbitrary bytes.
+-- If the input is not a string, or the string is empty, an error will be thrown.
 --
 -- @param input The input string.
 -- @return The Base64 representation of the input string.
 function base64.encode (input)
+	
+	assert(type(input) == "string", "Invalid input, expected type string but got: "..tostring(input).." as a: "..type(input))
+	assert(#input > 0, "Invalid input, cannot encode an empty string.")
 	
 	local bytes = { input:byte(i, #input) }
 
@@ -91,18 +121,18 @@ function base64.encode (input)
 		-- Read out the 4 octets into the output buffer.
 		b = bit.blogic_rshift(buffer, 18)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.blogic_rshift(buffer, 12)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.blogic_rshift(buffer, 6)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.band(buffer, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 				
 		i = i + 3
 	end
@@ -114,11 +144,14 @@ function base64.encode (input)
 		
 		local b = bit.blogic_rshift(buffer, 18)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.blogic_rshift(buffer, 12)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
+		
+		out[#out + 1] = PAD
+		out[#out + 1] = PAD
 		
 	-- Special case 2: Two bytes extra, will produce 3 octets.
 	elseif #bytes % 3 == 2 then
@@ -134,15 +167,17 @@ function base64.encode (input)
 
 		b = bit.blogic_rshift(buffer, 18)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.blogic_rshift(buffer, 12)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
 		
 		b = bit.blogic_rshift(buffer, 6)
 		b = bit.band(b, 0x3f)
-		out[#out + 1] = ENCODABET[b + 1]
+		out[#out + 1] = toChar(b)
+		
+		out[#out + 1] = PAD
 	end
 	
 	return table.concat(out)
@@ -150,40 +185,47 @@ function base64.encode (input)
 end
 
 --- Decodes a Base64 string into an output string of arbitrary bytes.
--- Currently does not check the input for valid Base64, so be careful.
+-- If the input is not a string, or the string is empty, or the string is not well-formed Base64, an error will be thrown.
 --
 -- @param input The Base64 input to decode.
 -- @return The decoded Base64 string, as a string of bytes.
 function base64.decode (input)
 	
+	assert(type(input) == "string", "Invalid input, expected type string but got: "..tostring(input).." as a: "..type(input))
+	assert(#input > 0, "Invalid input, cannot decode an empty string.")
+	
+	local length = #input
+	-- Ignore any padding.
+	if PAD then
+		length = input:find(PAD, 1, true) or (length + 1)
+		length = length - 1
+	end
+	assert(length > 0, "Invalid input, cannot decode a padded string with no bytes: "..tostring(input))
+	
 	local out = {}
 	
 	-- Go through each group of 4 octets to obtain 3 bytes.
 	local i = 1
-	while i <= #input - 3 do
+	while i <= length - 3 do
 		local buffer = 0
 		
 		-- Read the 4 octets into the buffer, producing a 24-bit integer.
-		local b = input:byte(i)
-		b = DECODABET[b - 44]
+		local b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 18)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 12)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 6)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
@@ -201,17 +243,15 @@ function base64.decode (input)
 	end
 
 	-- Special case 1: Only 2 octets remain, producing 1 byte.
-	if #input % 4 == 2 then
+	if length % 4 == 2 then
 		local buffer = 0
 
-		local b = input:byte(i)
-		b = DECODABET[b - 44]
+		local b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 18)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 12)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
@@ -221,23 +261,20 @@ function base64.decode (input)
 		out[#out + 1] = b
 		
 	-- Special case 2: Only 3 octets remain, producing 2 bytes.
-	elseif #input % 4 == 3 then
+	elseif length % 4 == 3 then
 		local buffer = 0
 		
-		local b = input:byte(i)
-		b = DECODABET[b - 44]
+		local b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 18)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 12)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
 		
-		b = input:byte(i)
-		b = DECODABET[b - 44]
+		b = toOctet(input:sub(i, i))
 		b = bit.blshift(b, 6)
 		buffer = bit.bor(buffer, b)
 		i = i + 1
@@ -249,6 +286,10 @@ function base64.decode (input)
 		b = bit.blogic_rshift(buffer, 8)
 		b = bit.band(b, 0xff)
 		out[#out + 1] = b
+		
+	-- Special case 3: One octet remains, we can't get any bytes out of this, throw error.
+	elseif length % 4 == 1 then
+		error("Invalid length input string, extra character: "..tostring(input:sub(i, i)))
 	end
 
 	return string.char(unpack(out))

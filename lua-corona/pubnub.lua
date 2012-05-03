@@ -3,8 +3,6 @@ require "aeslua"
 require "base64"
 
 local json = require "json"
-local util = require "aeslua.util"
-local ciphermode = require "aeslua.ciphermode"
 
 pubnub      = {}
 local LIMIT = 1700
@@ -27,8 +25,13 @@ function pubnub.new(init)
             return callback({ nil, "Missing Channel and/or Message" })
         end
 
+		local encrypted, err = self:_encrypt(args.message)
+		if not encrypted then
+			return callback({nil, err or "Unknown Error"})
+		end
+
         local channel   = args.channel
-        local message   = json.encode( self:_encrypt(args.message) )
+        local message   = json.encode( encrypted )
         local signature = "0"
 
         -- SIGN PUBLISHED MESSAGE?
@@ -125,7 +128,12 @@ function pubnub.new(init)
                     timer.performWithDelay( 1, substabizel )
 
                     for i, message in ipairs(response[1]) do
-                        callback( self:_decrypt(message) )
+						local decrypted, err = self:_decrypt(message)
+						if decrypted then
+							callback( decrypted )
+						else
+                        	errorback( err or "Unknown Error" )
+						end
                     end
                 end,
                 request = {
@@ -167,7 +175,12 @@ function pubnub.new(init)
             callback = function( messages )
 				if messages then
 					for i, message in ipairs(messages) do
-	            		messages[i] = self:_decrypt(message)
+						local decrypted, err = self:_decrypt(message)
+						if decrypted then
+	            			messages[i] = decrypted
+						else
+							print("Error decrypting message: "..tostring(err))
+						end
 	        		end
 				end
 				args.callback(messages)
@@ -259,9 +272,14 @@ function pubnub.new(init)
 	function self:_encrypt ( message )
 		if self.cipher_key then
 			local raw = json.encode(message)
-			local paddedData = util.padByteString(raw)
-			local encrypted = ciphermode.encryptString(self.cipher_key, paddedData, ciphermode.encryptCBC)
-			local encoded = base64.encode(encrypted)
+			local encrypted = aeslua.encrypt(self.cipher_key, raw, aeslua.AES128, aeslua.CBCMODE)
+			if not encrypted then
+				return nil, "Could not encrypt message string: "..tostring(raw)
+			end
+			local status, encoded = pcall(base64.encode, encrypted)
+			if not status then
+				return nil, encoded
+			end
 			return { encoded }
 		end
 		return message
@@ -270,10 +288,17 @@ function pubnub.new(init)
 	function self:_decrypt ( message )
 		if self.cipher_key and #message == 1 then
 			local encoded = message[1]
-			local decoded = base64.decode(encoded)
-			local decrypted = ciphermode.decryptString(self.cipher_key, decoded, ciphermode.decryptCBC)
-			local plain = util.unpadByteString(decrypted)
-			return json.decode(plain)
+			local status, decoded = pcall(base64.decode, encoded)
+			if not status then
+				return nil, decoded
+			end
+			local decrypted = aeslua.decrypt(self.cipher_key, decoded, aeslua.AES128, aeslua.CBCMODE)
+			local plain
+			status, plain = pcall(json.decode, decrypted)
+			if not status then
+				return nil, plain
+			end
+			return plain
 		end
 		return message
 	end
